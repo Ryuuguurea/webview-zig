@@ -4,12 +4,13 @@
 
 Zig binding for a tiny cross-platform **webview** library to build modern cross-platform GUIs.
 
+ fork from https://github.com/thechampagne/webview-zig
 <p align="center">
 <img src="https://raw.githubusercontent.com/thechampagne/webview-zig/main/.github/assets/screenshot.png"/>
 </p>
 
 ### Requirements
- - [Zig Compiler](https://ziglang.org/) - **0.13.0**
+ - [Zig Compiler](https://ziglang.org/) - **0.16.0**
  - Unix
    - [GTK3](https://gtk.org/) and [WebKitGTK](https://webkitgtk.org/)
  - Windows
@@ -20,20 +21,10 @@ Zig binding for a tiny cross-platform **webview** library to build modern cross-
 ### Usage
 
 ```
-zig fetch --save https://github.com/thechampagne/webview-zig/archive/refs/heads/main.tar.gz
+zig fetch --save git+https://github.com/ryuuguurea/webview-zig
 ```
 
-`build.zig.zon`:
-```zig
-.{
-    .dependencies = .{
-        .webview = .{
-            .url = "https://github.com/thechampagne/webview-zig/archive/refs/heads/main.tar.gz" ,
-          //.hash = "12208586373679a455aa8ef874112c93c1613196f60137878d90ce9d2ae8fb9cd511",
-        },
-    },
-}
-```
+
 `build.zig`:
 ```zig
 const webview = b.dependency("webview", .{
@@ -125,11 +116,11 @@ const WebView = struct {
 ```
 
 ### References
- - [webview](https://github.com/webview/webview/tree/0.12.0) - **0.12.0**
+ - [webview](https://github.com/ryuuguurea/webview/) - **cbbdee44afff22867de9fd88a9fc8350d9bdd399**
 
 ### License
 
-This repo is released under the [MIT License](https://github.com/thechampagne/webview-zig/blob/main/LICENSE).
+This repo is released under the [MIT License](https://github.com/ryuuguurea/webview-zig/blob/main/LICENSE).
 
 Third party code:
- - [external/WebView2](https://github.com/thechampagne/webview-zig/tree/main/external/WebView2) licensed under the [BSD-3-Clause License](https://github.com/thechampagne/webview-zig/tree/main/external/WebView2/LICENSE).
+ - [external/WebView2](https://github.com/ryuuguurea/webview-zig/tree/main/external/WebView2) licensed under the [BSD-3-Clause License](https://github.com/ryuuguurea/webview-zig/tree/main/external/WebView2/LICENSE).

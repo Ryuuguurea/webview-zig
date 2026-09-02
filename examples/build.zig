@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const webview = b.dependency("webview", .{});
-    
+
     const basic = b.addExecutable(.{
         .name = "basic",
         .root_module = b.addModule("basic", .{
@@ -27,8 +27,7 @@ pub fn build(b: *std.Build) void {
     });
 
     basic.root_module.addImport("webview", webview.module("webview"));
-    basic.linkLibC();
-    basic.linkSystemLibrary("webview");
+    basic.root_module.linkLibrary(webview.artifact("webviewStatic"));
     b.installArtifact(basic);
     const bind = b.addExecutable(.{
         .name = "bind",
@@ -40,8 +39,7 @@ pub fn build(b: *std.Build) void {
     });
 
     bind.root_module.addImport("webview", webview.module("webview"));
-    bind.linkLibC();
-    bind.linkSystemLibrary("webview");
+    bind.root_module.linkLibrary(webview.artifact("webviewStatic"));
     b.installArtifact(bind);
     const eval = b.addExecutable(.{
         .name = "eval",
@@ -53,8 +51,7 @@ pub fn build(b: *std.Build) void {
     });
 
     eval.root_module.addImport("webview", webview.module("webview"));
-    eval.linkLibC();
-    eval.linkSystemLibrary("webview");
+    eval.root_module.linkLibrary(webview.artifact("webviewStatic"));
     b.installArtifact(eval);
 
     const dispatch = b.addExecutable(.{
@@ -67,23 +64,13 @@ pub fn build(b: *std.Build) void {
     });
 
     dispatch.root_module.addImport("webview", webview.module("webview"));
-    dispatch.linkLibC();
-    dispatch.linkSystemLibrary("webview");
+    dispatch.root_module.linkLibrary(webview.artifact("webviewStatic"));
     b.installArtifact(dispatch);
     const basic_cmd = b.addRunArtifact(basic);
     const bind_cmd = b.addRunArtifact(bind);
     const eval_cmd = b.addRunArtifact(eval);
     const dispatch_cmd = b.addRunArtifact(dispatch);
-    basic_cmd.step.dependOn(b.getInstallStep());
-    bind_cmd.step.dependOn(b.getInstallStep());
-    eval_cmd.step.dependOn(b.getInstallStep());
-    dispatch_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        basic_cmd.addArgs(args);
-        bind_cmd.addArgs(args);
-        eval_cmd.addArgs(args);
-        dispatch_cmd.addArgs(args);
-    }
+
     const basic_step = b.step("basic", "Run the app");
     const bind_step = b.step("bind", "Run the app");
     const eval_step = b.step("eval", "Run the app");
