@@ -3,80 +3,87 @@ const std = @import("std");
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
+fn addExample(
+    b: *std.Build,
+    name: []const u8,
+    webview_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const app_mod = b.createModule(.{ .root_source_file = b.path(
+        b.fmt("{s}.zig", .{name}),
+    ), .target = target, .optimize = optimize });
+    app_mod.addImport(
+        "webview",
+        webview_mod,
+    );
+    const app = b.addExecutable(.{
+        .name = name,
+        .root_module = app_mod,
+    });
+    const run = b.addRunArtifact(app);
+    const step = b.step(name, b.fmt("run {s}", .{name}));
+    step.dependOn(&run.step);
+}
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
+    const webview_dep = b.dependency("webview", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const is_android = target.result.os.tag == .linux and target.result.abi == .android;
 
-    const webview = b.dependency("webview", .{});
-
-    const basic = b.addExecutable(.{
-        .name = "basic",
-        .root_module = b.addModule("basic", .{
-            .root_source_file = b.path("basic.zig"),
+    if (is_android) {
+        const android_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "android.zig",
+            ),
             .target = target,
             .optimize = optimize,
-        }),
-    });
+            .pic = true,
+        });
+        android_mod.addImport(
+            "webview",
+            webview_dep.module("webview"),
+        );
+        const android = b.addLibrary(.{
+            .name = "android",
+            .root_module = android_mod,
+            .linkage = .dynamic,
+        });
+        const android_step = b.step("android", "check android compiler");
+        android_step.dependOn(&android.step);
+    } else {
+        addExample(
+            b,
+            "basic",
+            webview_dep.module("webview"),
+            target,
+            optimize,
+        );
+        addExample(
+            b,
+            "bind",
+            webview_dep.module("webview"),
+            target,
+            optimize,
+        );
+        addExample(
+            b,
+            "dispatch",
+            webview_dep.module("webview"),
+            target,
+            optimize,
+        );
+        addExample(
+            b,
+            "eval",
+            webview_dep.module("webview"),
+            target,
+            optimize,
+        );
+    }
+    //
 
-    basic.root_module.addImport("webview", webview.module("webview"));
-    basic.root_module.linkLibrary(webview.artifact("webviewStatic"));
-    b.installArtifact(basic);
-    const bind = b.addExecutable(.{
-        .name = "bind",
-        .root_module = b.addModule("bind", .{
-            .root_source_file = b.path("bind.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    bind.root_module.addImport("webview", webview.module("webview"));
-    bind.root_module.linkLibrary(webview.artifact("webviewStatic"));
-    b.installArtifact(bind);
-    const eval = b.addExecutable(.{
-        .name = "eval",
-        .root_module = b.addModule("eval", .{
-            .root_source_file = b.path("eval.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    eval.root_module.addImport("webview", webview.module("webview"));
-    eval.root_module.linkLibrary(webview.artifact("webviewStatic"));
-    b.installArtifact(eval);
-
-    const dispatch = b.addExecutable(.{
-        .name = "dispatch",
-        .root_module = b.addModule("dispatch", .{
-            .root_source_file = b.path("dispatch.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    dispatch.root_module.addImport("webview", webview.module("webview"));
-    dispatch.root_module.linkLibrary(webview.artifact("webviewStatic"));
-    b.installArtifact(dispatch);
-    const basic_cmd = b.addRunArtifact(basic);
-    const bind_cmd = b.addRunArtifact(bind);
-    const eval_cmd = b.addRunArtifact(eval);
-    const dispatch_cmd = b.addRunArtifact(dispatch);
-
-    const basic_step = b.step("basic", "Run the app");
-    const bind_step = b.step("bind", "Run the app");
-    const eval_step = b.step("eval", "Run the app");
-    const dispatch_step = b.step("dispatch", "Run the app");
-    basic_step.dependOn(&basic_cmd.step);
-    bind_step.dependOn(&bind_cmd.step);
-    eval_step.dependOn(&eval_cmd.step);
-    dispatch_step.dependOn(&dispatch_cmd.step);
 }

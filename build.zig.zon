@@ -4,8 +4,8 @@
     .fingerprint = 0xd0d1ff8dff0a6422,
     .dependencies = .{
         .webview = .{
-            .url = "git+https://github.com/Ryuuguurea/webview.git#cbbdee44afff22867de9fd88a9fc8350d9bdd399",
-            .hash = "N-V-__8AAI7rCgBdbH6XBbsTUixI9aoYOegVLgoFoURV_2in",
+            .url = "git+https://github.com/Ryuuguurea/webview.git#8f918f4e88317f6bbe12d7289602936641a41005",
+            .hash = "N-V-__8AAIBiCwDeezhUG-SIIWNiBGuUFNaZpaXYv2FdNk7J",
         },
     },
     .paths = .{

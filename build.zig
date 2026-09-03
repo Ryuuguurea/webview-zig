@@ -1,165 +1,261 @@
 const std = @import("std");
+const builtin = @import("builtin");
+fn androidNdkTargetName(
+    arch: std.Target.Cpu.Arch,
+) []const u8 {
+    return switch (arch) {
+        .aarch64 => "aarch64-linux-android",
+        .arm, .thumb => "arm-linux-androidabi",
+        .x86 => "i686-linux-android",
+        .x86_64 => "x86_64-linux-android",
+        else => @panic("Unsupported Android architecture"),
+    };
+}
+fn androidNdkHostTag() []const u8 {
+    return switch (builtin.os.tag) {
+        .windows => "windows-x86_64",
 
+        .linux => "linux-x86_64",
+
+        .macos => "darwin-x86_64",
+
+        else => @panic(
+            "Unsupported Android NDK host",
+        ),
+    };
+}
+fn addAndroidNdkIncludes(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    ndk: []const u8,
+    translate: ?*std.Build.Step.TranslateC,
+    mod: ?*std.Build.Module,
+) void {
+    const host_tag = androidNdkHostTag();
+    const sysroot = b.pathJoin(&.{
+        ndk,
+        "toolchains",
+        "llvm",
+        "prebuilt",
+        host_tag,
+        "sysroot",
+    });
+    const common_include = b.pathJoin(&.{
+        sysroot,
+        "usr",
+        "include",
+    });
+    const target_include = b.pathJoin(&.{
+        common_include,
+        androidNdkTargetName(
+            target.result.cpu.arch,
+        ),
+    });
+
+    if (translate) |t| {
+        t.addSystemIncludePath(.{
+            .cwd_relative = common_include,
+        });
+        t.addSystemIncludePath(.{
+            .cwd_relative = target_include,
+        });
+    }
+    if (mod) |m| {
+        m.addSystemIncludePath(.{
+            .cwd_relative = common_include,
+        });
+        m.addSystemIncludePath(.{
+            .cwd_relative = target_include,
+        });
+    }
+}
+fn configureAndroid(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    ndk: []const u8,
+    mod: *std.Build.Module,
+) void {
+    addAndroidNdkIncludes(
+        b,
+        target,
+        ndk,
+        null,
+        mod,
+    );
+}
+fn configureWindows(
+    b: *std.Build,
+    mod: *std.Build.Module,
+) void {
+    mod.addIncludePath(
+        b.path("external/WebView2/"),
+    );
+    mod.linkSystemLibrary(
+        "ole32",
+        .{ .use_pkg_config = .no },
+    );
+    mod.linkSystemLibrary(
+        "shlwapi",
+        .{ .use_pkg_config = .no },
+    );
+    mod.linkSystemLibrary(
+        "version",
+        .{ .use_pkg_config = .no },
+    );
+    mod.linkSystemLibrary(
+        "advapi32",
+        .{ .use_pkg_config = .no },
+    );
+    mod.linkSystemLibrary(
+        "shell32",
+        .{ .use_pkg_config = .no },
+    );
+    mod.linkSystemLibrary(
+        "user32",
+        .{ .use_pkg_config = .no },
+    );
+}
+fn configureMacOS(
+    mod: *std.Build.Module,
+) void {
+    mod.linkFramework(
+        "WebKit",
+        .{},
+    );
+}
+fn configureLinux(
+    mod: *std.Build.Module,
+) void {
+    mod.linkSystemLibrary(
+        "gtk+-3.0",
+        .{},
+    );
+    mod.linkSystemLibrary(
+        "webkit2gtk-4.1",
+        .{},
+    );
+}
+fn configureFreeBSD(
+    mod: *std.Build.Module,
+) void {
+    mod.linkSystemLibrary(
+        "gtk-3",
+        .{},
+    );
+    mod.linkSystemLibrary(
+        "webkit2gtk-4.1",
+        .{},
+    );
+}
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const webview = b.dependency("webview", .{});
+    const webview_dep = b.dependency("webview", .{});
 
-    const webviewRaw = b.addTranslateC(.{
-        .root_source_file = webview.path("core/include/webview/webview.h"),
-        .optimize = optimize,
+    const is_android = target.result.os.tag == .linux and
+        target.result.abi == .android;
+
+    const android_ndk = if (is_android)
+        b.option(
+            []const u8,
+            "android-ndk",
+            "Path to Android NDK",
+        ) orelse b.graph.environ_map.get(
+            "ANDROID_NDK_HOME",
+        ) orelse b.graph.environ_map.get(
+            "ANDROID_NDK_ROOT",
+        ) orelse b.graph.environ_map.get(
+            "NDK_HOME",
+        ) orelse @panic(
+            \\Android build requires Android NDK.
+            \\
+            \\Set:
+            \\  ANDROID_NDK_HOME
+            \\
+            \\or use:
+            \\  -Dandroid-ndk=C:/.../Android/Sdk/ndk/xx.x.x
+        )
+    else
+        null;
+
+    const generated = b.addWriteFiles();
+    const c_api_header = generated.add("webview_zig_all.h",
+        \\#include <webview/webview.h>
+        \\#if defined(__ANDROID__)
+        \\#include <webview/android.h>
+        \\#endif
+    );
+    const translate = b.addTranslateC(.{
+        .root_source_file = c_api_header,
         .target = target,
-    }).createModule();
+        .optimize = optimize,
+    });
 
-    _ = b.addModule("webview", .{
+    translate.addIncludePath(webview_dep.path("core/include"));
+    if (is_android) {
+        addAndroidNdkIncludes(
+            b,
+            target,
+            android_ndk.?,
+            translate,
+            null,
+        );
+    }
+    const webview_raw = translate.createModule();
+
+    const webview_mod = b.addModule("webview", .{
         .root_source_file = b.path("src/webview.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
         .link_libcpp = true,
-        //.dependencies = &[_]std.Build.ModuleDependency{},
-    }).addImport("webviewRaw", webviewRaw);
-
-    // const objectFile = b.addObject(.{
-    //     .name = "webviewObject",
-    //     .optimize = optimize,
-    //     .target = target,
-    // });
-    // objectFile.defineCMacro("WEBVIEW_STATIC", null);
-    // objectFile.linkLibCpp();
-    // switch(target.os_tag orelse @import("builtin").os.tag) {
-    //     .windows => {
-    //         objectFile.addCSourceFile(.{ .file = b.path("external/webview/webview.cc") .flags = &.{"-std=c++14"}});
-    //         objectFile.addIncludePath(std.build.LazyPath.relative("external/WebView2/"));
-    //         objectFile.linkSystemLibrary("ole32");
-    //         objectFile.linkSystemLibrary("shlwapi");
-    //         objectFile.linkSystemLibrary("version");
-    //         objectFile.linkSystemLibrary("advapi32");
-    //         objectFile.linkSystemLibrary("shell32");
-    //         objectFile.linkSystemLibrary("user32");
-    //     },
-    //     .macos => {
-    //         objectFile.addCSourceFile(.{ .file = b.path("external/webview/webview.cc") .flags = &.{"-std=c++11"}});
-    //         objectFile.linkFramework("WebKit");
-    //     },
-    //     else => {
-    //         objectFile.addCSourceFile(.{ .file = b.path("external/webview/webview.cc") .flags = &.{"-std=c++11"}});
-    //         objectFile.linkSystemLibrary("gtk+-3.0");
-    //         objectFile.linkSystemLibrary("webkit2gtk-4.0");
-    //     }
-    // }
-    const staticLib = b.addLibrary(.{
-        .name = "webviewStatic",
-        .root_module = b.addModule("webviewStatic", .{
-            .target = target,
-            .optimize = optimize,
-        }),
-        .linkage = .static,
     });
-    staticLib.root_module.addIncludePath(webview.path("core/include/"));
-    staticLib.root_module.addCMacro("WEBVIEW_STATIC", "");
-    staticLib.root_module.link_libcpp = true;
-    switch (target.query.os_tag orelse @import("builtin").os.tag) {
-        .windows => {
-            staticLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++14"} });
-            staticLib.root_module.addIncludePath(b.path("external/WebView2/"));
-            staticLib.root_module.linkSystemLibrary("ole32", .{});
-            staticLib.root_module.linkSystemLibrary("shlwapi", .{});
-            staticLib.root_module.linkSystemLibrary("version", .{});
-            staticLib.root_module.linkSystemLibrary("advapi32", .{});
-            staticLib.root_module.linkSystemLibrary("shell32", .{});
-            staticLib.root_module.linkSystemLibrary("user32", .{});
-        },
-        .macos => {
-            staticLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            staticLib.root_module.linkFramework("WebKit", .{});
-        },
-        .freebsd => {
-            staticLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/cairo/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/gtk-3.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/glib-2.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/lib/glib-2.0/include/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/webkitgtk-4.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/pango-1.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/harfbuzz/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/gdk-pixbuf-2.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/atk-1.0/" });
-            staticLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/libsoup-3.0/" });
-            staticLib.root_module.linkSystemLibrary("gtk-3", .{});
-            staticLib.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-        else => {
-            staticLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            staticLib.root_module.linkSystemLibrary("gtk+-3.0", .{});
-            staticLib.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-    }
-    b.installArtifact(staticLib);
-
-    const sharedLib = b.addLibrary(.{
-        .name = "webviewShared",
-        .root_module = b.addModule("webviewShared", .{
-            .target = target,
-            .optimize = optimize,
-        }),
-        .linkage = .dynamic,
+    webview_mod.addImport("webviewRaw", webview_raw);
+    webview_mod.addIncludePath(webview_dep.path("core/include"));
+    webview_mod.addCMacro("WEBVIEW_STATIC", "1");
+    webview_mod.addCSourceFile(.{
+        .file = webview_dep.path("core/src/webview.cc"),
+        .language = .cpp,
+        .flags = &.{"-std=c++17"},
     });
-    sharedLib.root_module.addIncludePath(webview.path("core/include/"));
-    sharedLib.root_module.addCMacro("WEBVIEW_BUILD_SHARED", "");
-    sharedLib.root_module.link_libcpp = true;
-    switch (target.query.os_tag orelse @import("builtin").os.tag) {
-        .windows => {
-            sharedLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++14"} });
-            sharedLib.root_module.addIncludePath(b.path("external/WebView2/"));
-            sharedLib.root_module.linkSystemLibrary("ole32", .{});
-            sharedLib.root_module.linkSystemLibrary("shlwapi", .{});
-            sharedLib.root_module.linkSystemLibrary("version", .{});
-            sharedLib.root_module.linkSystemLibrary("advapi32", .{});
-            sharedLib.root_module.linkSystemLibrary("shell32", .{});
-            sharedLib.root_module.linkSystemLibrary("user32", .{});
-        },
-        .macos => {
-            sharedLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            sharedLib.root_module.linkFramework("WebKit", .{});
-        },
-        .freebsd => {
-            sharedLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/cairo/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/gtk-3.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/glib-2.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/lib/glib-2.0/include/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/webkitgtk-4.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/pango-1.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/harfbuzz/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/gdk-pixbuf-2.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/atk-1.0/" });
-            sharedLib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/include/libsoup-3.0/" });
-            sharedLib.root_module.linkSystemLibrary("gtk-3", .{});
-            sharedLib.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-        else => {
-            sharedLib.root_module.addCSourceFile(.{ .file = webview.path("core/src/webview.cc"), .flags = &.{"-std=c++11"} });
-            sharedLib.root_module.linkSystemLibrary("gtk+-3.0", .{});
-            sharedLib.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-    }
-    b.installArtifact(sharedLib);
-
-    const unit_tests = b.addTest(.{
-        .root_module = b.addModule(
-            "webviewTest",
-            .{
-                .root_source_file = b.path("src/test.zig"),
-                .target = target,
-                .optimize = optimize,
+    //
+    //
+    if (is_android) {
+        configureAndroid(
+            b,
+            target,
+            android_ndk.?,
+            webview_mod,
+        );
+    } else {
+        switch (target.result.os.tag) {
+            .windows => {
+                configureWindows(
+                    b,
+                    webview_mod,
+                );
             },
-        ),
-    });
-    unit_tests.root_module.addImport("webviewRaw", webviewRaw);
-    unit_tests.root_module.linkLibrary(staticLib);
-
-    const run_unit_tests = b.addRunArtifact(unit_tests);
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
+            .macos => {
+                configureMacOS(
+                    webview_mod,
+                );
+            },
+            .linux => {
+                configureLinux(
+                    webview_mod,
+                );
+            },
+            .freebsd => {
+                configureFreeBSD(
+                    webview_mod,
+                );
+            },
+            else => {
+                @panic(
+                    "webview-zig : unsupported platform",
+                );
+            },
+        }
+    }
 }
